@@ -39,8 +39,8 @@ floating around in the mailing list archives is sufficient.
 *   The code needs to compile each chunk multiple times and slice it
     using `string.*`, `lbci.*`, and `debug.*` functions, it also
     creates multiple closures for each chunk. Therefore, it will work
-    slower and consume more memory that usual -- this shouldn't be a
-    problem in an interactive session, though.
+    (load/compile) slower and consume more memory than usual -- this
+    shouldn't be a problem in an interactive session, though.
 *   If a single chunk (typically a line) defines locals and later
     throws an error, those locals will be gone as well. They will not
     show up in later chunks!
