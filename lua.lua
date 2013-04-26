@@ -27,13 +27,13 @@ local _G = _G
 local assert = assert
 local collectgarbage = collectgarbage
 local loadfile = loadfile
-local loadstring = loadstring
+local loadstring = load
 local pcall = pcall
 local rawget = rawget
 local select = select
 local tostring = tostring
 local type = type
-local unpack = unpack
+local unpack = table.unpack
 local xpcall = xpcall
 local io_stderr = io.stderr
 local io_stdout = io.stdout
@@ -42,6 +42,15 @@ local string_format = string.format
 local string_sub = string.sub
 local os_getenv = os.getenv
 local os_exit = os.exit
+local require = require
+local bci = require( "bci" )
+local bci_getheader = bci.getheader
+local bci_getlocal = bci.getlocal
+local bci_getupvalue = bci.getupvalue
+local debug = require( "debug" )
+local db_getupvalue = debug.getupvalue
+local db_upvaluejoin = debug.upvaluejoin
+local tconcat = table.concat
 
 
 local progname = LUA_PROGNAME
@@ -161,12 +170,50 @@ end
 
 local function incomplete (msg)
   if msg then
-    local ender = LUA_QL("<eof>")
+    local ender = "<eof>"
     if string_sub(msg, -#ender) == ender then
       return true
     end
   end
   return false
+end
+
+
+local function funclocals (chunk)
+  local names = {}
+  local header = bci_getheader(chunk)
+  for i = 1, header.upvalues do
+    local name = bci_getupvalue(chunk, i)
+    if not names[ name ] then
+      names[ #names+1 ] = name
+      names[ name ] = #names
+    end
+  end
+  for i = 1, header.locals do
+    local name = bci_getlocal(chunk, i)
+    if name:sub( 1, 1 ) ~= "(" and not names[ name ] then
+      names[ #names+1 ] = name
+      names[ name ] = #names
+    end
+  end
+  return names
+end
+
+local function make_list (f)
+  local names = funclocals(f)
+  local h = tconcat(names, ", ")
+  return h
+end
+
+local function find_upvalue (f, name)
+  local i = 1
+  repeat
+    local up_name = db_getupvalue(f, i)
+    if up_name == name then
+      return i
+    end
+    i = i + 1
+  until up_name == nil
 end
 
 
@@ -177,19 +224,44 @@ local function pushline (firstline)
   local b = io_stdin:read'*l'
   if not b then return end -- no input
   if firstline and string_sub(b, 1, 1) == '=' then
-    return "return " .. string_sub(b, 2)  -- change '=' to `return'
+    return "return " .. string_sub(b, 2), true -- change '=' to `return'
   else
     return b
   end
 end
 
 
-local function loadline ()
-  local b = pushline(true)
+local function loadline (lastlocals)
+  local b, returns = pushline(true)
   if not b then return -1 end  -- no input
+  local lnames = make_list(lastlocals)
   local f, msg
   while true do  -- repeat until gets a complete line
-    f, msg = loadstring(b, "=stdin")
+    local h = lnames ~= "" and "local "..lnames.."; " or ""
+    f, msg = loadstring(h..b, "=stdin")
+    if f then
+      local nlnames = make_list(f)
+      local common = "return (function("..lnames..
+                     ") return function() _ENV=_ENV; "
+      local nh = returns and nlnames or ""
+      f = assert(loadstring(common..b..
+                 "\nreturn function() return "..nlnames..
+                 " end end end)()", b) or
+                 loadstring(common.."return function() return "..nh..
+                 " end, (function() _ENV=_ENV; "..b..
+                 "\nend)() end end)()", b))()
+      local i = 1
+      repeat
+        local name, val = db_getupvalue(lastlocals, i)
+        if name then
+          local n = find_upvalue(f, name)
+          if n then
+            db_upvaluejoin(f, n, lastlocals, i)
+          end
+          i = i + 1
+        end
+      until name == nil
+    end
     if not incomplete(msg) then break end  -- cannot try to add lines?
     local b2 = pushline(false)
     if not b2 then -- no more input?
@@ -207,21 +279,25 @@ end
 local function dotty ()
   local oldprogname = progname
   progname = nil
+  local lastlocals = function() end
   while true do
     local result
-    local status, msg = loadline()
+    local status, msg = loadline(lastlocals)
     if status == -1 then break end
     if status then
       result = tuple(docall(status))
       status, msg = result[1], result[2]
     end
     report(status, msg)
-    if status and result.n > 1 then  -- any result to print?
-      status, msg = pcall(_G.print, unpack(result, 2, result.n))
-      if not status then
-        l_message(progname, string_format(
-            "error calling %s (%s)",
-            LUA_QL("print"), msg))
+    if status and result.n > 1 then
+      lastlocals = result[2]
+      if result.n > 2 then  -- any result to print?
+        status, msg = pcall(_G.print, unpack(result, 3, result.n))
+        if not status then
+          l_message(progname, string_format(
+              "error calling %s (%s)",
+              LUA_QL("print"), msg))
+        end
       end
     end
   end
@@ -354,3 +430,4 @@ elseif script == 0 and not has.e and not has.v then
   else dofile(nil)  -- executes stdin as a file
   end
 end
+
