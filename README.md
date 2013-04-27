@@ -36,7 +36,7 @@ floating around in the mailing list archives is sufficient.
     code, you must omit the final return statement if you want to
     access the locals in the module later on. You can also use a
     `return` statement to reset the `_ENV` environment, in case you
-    changed it earlier (e.g. via `module`. The special `=<expr>`
+    changed it earlier (e.g. via `module`). The special `=<expr>`
     syntax should work as expected without affecting/resetting any
     locals.
 *   The code needs to compile each chunk multiple times and slice it
