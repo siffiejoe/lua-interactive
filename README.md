@@ -24,6 +24,16 @@ floating around in the mailing list archives is sufficient.
   [3]:  http://www.tecgraf.puc-rio.br/~lhf/ftp/lua/#lbci
   [4]:  http://lua-users.org/lists/lua-l/2013-04/msg00664.html
 
+###                           LuaJIT 2.0                           ###
+
+LuaJIT 2.0 is incompatible with lbci, but it has some extensions
+compared to Lua 5.1 (most notably `debug.upvaluejoin` and an enhanced
+`debug.getlocal`) that *almost* make it possible to use the same
+tricks. A three line patch is necessary to make it ignore its program
+counter when listing locals, but since I have no idea if something
+would break horribly with this change, the patch got a bit larger to
+be on the safe side.
+
 ##                  Features/Quirks (mostly quirks)                 ##
 
 *   The original "Lua interpreter in Lua" was written for Lua 5.1. I

@@ -1,0 +1,110 @@
+diff -Naurd old/src/lib_debug.c new/src/lib_debug.c
+--- old/src/lib_debug.c	2013-04-28 20:49:30.176354692 +0200
++++ new/src/lib_debug.c	2013-04-28 20:04:02.904312289 +0200
+@@ -184,6 +184,32 @@
+   }
+ }
+ 
++LJLIB_CF(debug_getlocalx)
++{
++  int arg;
++  lua_State *L1 = getthread(L, &arg);
++  lua_Debug ar;
++  const char *name;
++  int slot = lj_lib_checkint(L, arg+2);
++  if (tvisfunc(L->base+arg)) {
++    L->top = L->base+arg+1;
++    lua_pushstring(L, lua_getlocalx(L, NULL, slot));
++    return 1;
++  }
++  if (!lua_getstack(L1, lj_lib_checkint(L, arg+1), &ar))
++    lj_err_arg(L, arg+1, LJ_ERR_LVLRNG);
++  name = lua_getlocal(L1, &ar, slot);
++  if (name) {
++    lua_xmove(L1, L, 1);
++    lua_pushstring(L, name);
++    lua_pushvalue(L, -2);
++    return 2;
++  } else {
++    setnilV(L->top-1);
++    return 1;
++  }
++}
++
+ LJLIB_CF(debug_setlocal)
+ {
+   int arg;
+diff -Naurd old/src/lj_debug.c new/src/lj_debug.c
+--- old/src/lj_debug.c	2013-04-28 20:49:30.184354690 +0200
++++ new/src/lj_debug.c	2013-04-28 20:03:04.192311323 +0200
+@@ -179,6 +179,37 @@
+   return NULL;
+ }
+ 
++static const char *debug_varname_x(const GCproto *pt, BCPos pc, BCReg slot)
++{
++  const uint8_t *p = proto_varinfo(pt);
++  if (p) {
++    BCPos lastpc = 0;
++    for (;;) {
++      const char *name = (const char *)p;
++      uint32_t vn = *p++;
++      BCPos startpc, endpc;
++      if (vn < VARNAME__MAX) {
++	if (vn == VARNAME_END) break;  /* End of varinfo. */
++      } else {
++	while (*p++) ;  /* Skip over variable name string. */
++      }
++      lastpc = startpc = lastpc + debug_read_uleb128(&p);
++      endpc = startpc + debug_read_uleb128(&p);
++      (void)endpc;
++      if (slot-- == 0) {
++	if (vn < VARNAME__MAX) {
++#define VARNAMESTR(name, str)	str "\0"
++	  name = VARNAMEDEF(VARNAMESTR);
++#undef VARNAMESTR
++	  if (--vn) while (*name++ || --vn) ;
++	}
++	return name;
++      }
++    }
++  }
++  return NULL;
++}
++
+ /* Get name of local variable from 1-based slot number and function/frame. */
+ static TValue *debug_localname(lua_State *L, const lua_Debug *ar,
+ 			       const char **name, BCReg slot1)
+@@ -412,6 +443,21 @@
+   }
+   return name;
+ }
++
++LUA_API const char *lua_getlocalx(lua_State *L, const lua_Debug *ar, int n)
++{
++  const char *name = NULL;
++  if (ar) {
++    TValue *o = debug_localname(L, ar, &name, (BCReg)n);
++    if (name) {
++      copyTV(L, L->top, o);
++      incr_top(L);
++    }
++  } else if (tvisfunc(L->top-1) && isluafunc(funcV(L->top-1))) {
++    name = debug_varname_x(funcproto(funcV(L->top-1)), 0, (BCReg)n-1);
++  }
++  return name;
++}
+ 
+ LUA_API const char *lua_setlocal(lua_State *L, const lua_Debug *ar, int n)
+ {
+diff -Naurd old/src/lua.h new/src/lua.h
+--- old/src/lua.h	2013-04-28 20:49:30.192354689 +0200
++++ new/src/lua.h	2013-04-28 20:06:16.732314325 +0200
+@@ -333,6 +333,7 @@
+ LUA_API int lua_getstack (lua_State *L, int level, lua_Debug *ar);
+ LUA_API int lua_getinfo (lua_State *L, const char *what, lua_Debug *ar);
+ LUA_API const char *lua_getlocal (lua_State *L, const lua_Debug *ar, int n);
++LUA_API const char *lua_getlocalx (lua_State *L, const lua_Debug *ar, int n);
+ LUA_API const char *lua_setlocal (lua_State *L, const lua_Debug *ar, int n);
+ LUA_API const char *lua_getupvalue (lua_State *L, int funcindex, int n);
+ LUA_API const char *lua_setupvalue (lua_State *L, int funcindex, int n);
