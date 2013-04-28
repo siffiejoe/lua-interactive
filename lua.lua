@@ -33,7 +33,7 @@ local rawget = rawget
 local select = select
 local tostring = tostring
 local type = type
-local unpack = table.unpack
+local unpack = table.unpack or unpack
 local xpcall = xpcall
 local io_stderr = io.stderr
 local io_stdout = io.stdout
@@ -43,10 +43,6 @@ local string_sub = string.sub
 local os_getenv = os.getenv
 local os_exit = os.exit
 local require = require
-local bci = require( "bci" )
-local bci_getheader = bci.getheader
-local bci_getlocal = bci.getlocal
-local bci_getupvalue = bci.getupvalue
 local debug = require( "debug" )
 local db_getupvalue = debug.getupvalue
 local db_upvaluejoin = debug.upvaluejoin
@@ -168,10 +164,69 @@ local function get_prompt (firstline)
 end
 
 
+local locals_list, eof_ender
+if debug.getlocalx then -- patched luajit
+  local getfenv = getfenv
+  local db_getlocalx = debug.getlocalx
+
+  eof_ender = LUA_QL("<eof>")
+
+  function locals_list (chunk)
+    local names = {}
+    local i = 1
+    repeat
+      local name = db_getupvalue(chunk, i)
+      if name and not names[ name ] then
+        names[ #names+1 ] = name
+        names[ name ] = #names
+      end
+      i = i + 1
+    until name == nil
+    i = 1
+    repeat
+      local name = db_getlocalx(chunk, i)
+      if name and not names[ name ] then
+        names[ #names+1 ] = name
+        names[ name ] = #names
+      end
+      i = i + 1
+    until name == nil
+    return tconcat(names, ", "), getfenv(chunk)
+  end
+
+else -- lua5.2 with lbci
+  local bci = require( "bci" )
+  local bci_getheader = bci.getheader
+  local bci_getlocal = bci.getlocal
+  local bci_getupvalue = bci.getupvalue
+
+  eof_ender = "<eof>"
+
+  function locals_list (chunk)
+    local names = {}
+    local header = bci_getheader(chunk)
+    for i = 1, header.upvalues do
+      local name = bci_getupvalue(chunk, i)
+      if not names[ name ] then
+        names[ #names+1 ] = name
+        names[ name ] = #names
+      end
+    end
+    for i = 1, header.locals do
+      local name = bci_getlocal(chunk, i)
+      if name:sub( 1, 1 ) ~= "(" and not names[ name ] then
+        names[ #names+1 ] = name
+        names[ name ] = #names
+      end
+    end
+    return tconcat( names, ", " ), _ENV
+  end
+end
+
+
 local function incomplete (msg)
   if msg then
-    local ender = "<eof>"
-    if string_sub(msg, -#ender) == ender then
+    if string_sub(msg, -#eof_ender) == eof_ender then
       return true
     end
   end
@@ -179,31 +234,6 @@ local function incomplete (msg)
 end
 
 
-local function funclocals (chunk)
-  local names = {}
-  local header = bci_getheader(chunk)
-  for i = 1, header.upvalues do
-    local name = bci_getupvalue(chunk, i)
-    if not names[ name ] then
-      names[ #names+1 ] = name
-      names[ name ] = #names
-    end
-  end
-  for i = 1, header.locals do
-    local name = bci_getlocal(chunk, i)
-    if name:sub( 1, 1 ) ~= "(" and not names[ name ] then
-      names[ #names+1 ] = name
-      names[ name ] = #names
-    end
-  end
-  return names
-end
-
-local function make_list (f)
-  local names = funclocals(f)
-  local h = tconcat(names, ", ")
-  return h
-end
 
 local function find_upvalue (f, name)
   local i = 1
@@ -234,22 +264,23 @@ end
 local function loadline (lastlocals)
   local b, returns = pushline(true)
   if not b then return -1 end  -- no input
-  local lnames = make_list(lastlocals)
+  local lnames, env = locals_list(lastlocals)
   local f, msg
   while true do  -- repeat until gets a complete line
     local h = lnames ~= "" and "local "..lnames.."; " or ""
     f, msg = loadstring(h..b, "=stdin")
     if f then
-      local nlnames = make_list(f)
+      local nlnames = locals_list(f)
       local common = "return (function("..lnames..
                      ") return function() _ENV=_ENV; "
       local nh = returns and nlnames or ""
       f = assert(loadstring(common..b..
-                 "\nreturn function() return "..nlnames..
-                 " end end end)()", b) or
+                            "\nreturn function() return "..nlnames..
+                            " end end end)()", b, "t", env) or
                  loadstring(common.."return function() return "..nh..
-                 " end, (function() _ENV=_ENV; "..b..
-                 "\nend)() end end)()", b))()
+                            " end, (function() _ENV=_ENV; "..b..
+                            "\nend)() end end)()", b, "t",
+                            returns and env or _G))()
       local i = 1
       repeat
         local name, val = db_getupvalue(lastlocals, i)
