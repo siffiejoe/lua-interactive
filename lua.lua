@@ -276,10 +276,10 @@ local function loadline (lastlocals)
       local nh = returns and nlnames or ""
       f = assert(loadstring(common..b..
                             "\nreturn function() return "..nlnames..
-                            " end end end)()", b, "t", env) or
+                            " end end end)()", "=stdin", "t", env) or
                  loadstring(common.."return function() return "..nh..
                             " end, (function() _ENV=_ENV; "..b..
-                            "\nend)() end end)()", b, "t",
+                            "\nend)() end end)()", "=stdin", "t",
                             returns and env or _G))()
       local i = 1
       repeat
